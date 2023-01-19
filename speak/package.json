@@ -1,0 +1,42 @@
+{
+  "name": "nodejs-template",
+  "version": "0.1.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "npm run dev-strict -- --transpile-only",
+    "dev-strict": "APP_ENV=development ts-node-dev -p tsconfig-buid.json --experimental-repl-await --inspect=0.0.0.0:9229 --rs src",
+    "serve": "node src/index.js",
+    "prebuild": "eslint src",
+    "build": "tsc -p tsconfig-buid.json",
+    "lint": "eslint --fix src",
+    "lint-pretend": "eslint --fix-dry-run src",
+    "test": "NODE_ENV=test mocha",
+    "watch": "npm run test -- --watch",
+    "watch-debug": "npm run watch -- --inspect-brk"
+  },
+  "author": "Sebastian Sipos <sebastiansipos90@gmail.com>",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/chai": "^4.3.4",
+    "@types/mocha": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.42.1",
+    "chai": "^4.3.7",
+    "eslint": "^8.27.0",
+    "eslint-config-standard-with-typescript": "^23.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-mocha": "^10.1.0",
+    "eslint-plugin-n": "^15.5.1",
+    "eslint-plugin-promise": "^6.1.1",
+    "mocha": "^10.1.0",
+    "mock-require": "^3.0.3",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^4.8.4"
+  },
+  "dependencies": {
+    "@types/debug": "^4.1.7",
+    "@types/node": "^18.11.9",
+    "module-alias": "^2.2.2",
+    "ts-node": "^10.9.1"
+  }
+}
