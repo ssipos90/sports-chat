@@ -1,12 +1,11 @@
 {
-  "ts-node": {
-    "files": true
-  },
   "compilerOptions": {
     "allowJs": false,
+    "allowSyntheticDefaultImports": true,
     "baseUrl": "./src",
     "declaration": true,
     "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
     "experimentalDecorators": true,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2020"],
@@ -23,6 +22,7 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
+    "strictNullChecks": true,
     "strictPropertyInitialization": false,
     "target": "es2020",
     "typeRoots": [

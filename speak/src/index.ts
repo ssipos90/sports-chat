@@ -1,15 +1,8 @@
 import 'module-alias/register';
+import { start } from './start';
 
-(async () => {
-  console.log('is this thing on');
-})()
+start()
   .catch(err => {
     console.error(err);
-    const x = [
-      1,
-      2,
-      3,
-    ];
-    console.log(x);
     process.exit(1);
   });

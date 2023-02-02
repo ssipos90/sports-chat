@@ -4,6 +4,8 @@
     "files": true
   },
   "include": [
-    "./test/**/*"
+    "./test/**/*",
+    "./src/**/*",
+    "./types/**/*"
   ]
 }

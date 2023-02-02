@@ -1,0 +1,42 @@
+services:
+  speak:
+    image: node:18-alpine
+    command: ["npm", "run", "dev-strict"]
+    environment:
+      - VIRTUAL_HOST=${SPEAK_HOSTNAME?err}
+      - VIRTUAL_PORT=${SPEAK_PORT?err}
+      - SPEAK_HOSTNAME=${SPEAK_HOSTNAME?err}
+      - SPEAK_PORT=${SPEAK_PORT?err}
+      - REDIS_URI=${REDIS_URI?err}
+      - NODE_ENV=${ENV?err}
+    expose:
+      - ${SPEAK_PORT?err}
+    ports:
+      - 9229:9229
+    networks:
+      - services
+      - default
+    user: node
+    working_dir: /home/node/app
+    volumes:
+      - ./speak:/home/node/app:ro
+  redis6:
+    image: redis:6-alpine
+    command:
+      - 'redis-server'
+      - '--save'
+      - '60'
+      - '1'
+      - '--appendonly'
+      - 'yes'
+      - '--loglevel'
+      - 'warning'
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
+
+networks:
+  services:
+    name: services_default
