@@ -19,6 +19,7 @@ module.exports = {
     '@typescript-eslint/semi': ['error', 'always'],
     'comma-dangle': ['warn', 'always-multiline'],
     '@typescript-eslint/comma-dangle': ['warn', 'always-multiline'],
+    '@typescript-eslint/strict-boolean-expressions': 'off',
   },
   plugins: [
     'mocha',

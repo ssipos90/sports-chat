@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { routes as chat } from './chat';
 import { routes as users } from './users';
+import { routes as rooms } from './rooms';
 
 export const routes: Router = Router()
   .use('/api', Router()
-    .use('/chat', chat)
+    .use('/rooms', rooms)
     .use('/users', users),
   );

@@ -9,8 +9,13 @@ import { isValid, parseISO } from 'date-fns';
 import { redis } from '../redis';
 
 async function loadRoom (roomId: ID): Promise<Room | null> {
-  // TODO: load room from redis
-  return null;
+  const room = await redis.hget(`room:${roomId}`, 'room');
+  if (room === null) {
+    return null;
+  }
+
+  // TODO: we will trust our past self that 'room' is valid
+  return JSON.parse(room);
 }
 
 interface Match {
@@ -20,7 +25,7 @@ interface Match {
   users: User[]
 }
 
-interface Room {
+export interface Room {
   _id: ID
   match: Match
   clients: Client[]
@@ -37,7 +42,7 @@ interface Message {
 interface Client {
   _id: ID
   user: User
-  chats: ID[]
+  rooms: ID[]
   ws: WebSocket
 }
 
@@ -75,11 +80,50 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
     const client: Client = {
       _id: uuid(),
       user,
-      chats: [],
+      rooms: [],
       ws,
     };
 
     return client;
+  }
+
+  async function listenToRoom (roomId: ID): Promise<void> {
+    let errorCount = 0;
+    let lastId = '$';
+    function listener (): void {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      redis.xread('BLOCK', 0, 'STREAMS', `messages:${roomId}`, lastId, (err, result) => {
+        if (err || result === undefined) {
+          ++errorCount;
+          console.error(`redis xread failed ${errorCount} times. Last error is:`, err);
+          if (errorCount > 3) {
+            // TODO: disconnect all clients from this room.
+            return;
+          }
+          setTimeout(listener, errorCount * 1000);
+        } else if (result === null) {
+          // TODO: stream doesn't exist (check docs though)
+          console.error('message stream does not exist in redis.');
+        } else {
+          errorCount = 0;
+          const roomClients = clients
+            .filter(client => client.rooms.includes(roomId));
+          if (roomClients.length > 0) {
+            result.forEach(([_, messages]) => {
+              messages.forEach(([id, [_, message]]) => {
+                lastId = id;
+                roomClients.forEach(client => {
+                  client.ws.send(JSON.stringify(message));
+                });
+              });
+            });
+            setImmediate(listener);
+          }
+        }
+      });
+    }
+
+    listener();
   }
 
   const context: Context = {
@@ -94,10 +138,7 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
       }
 
       if (loadedRoom === undefined) {
-        // await redis.hset(`rooms:${payload.roomId}`, 'room', JSON.stringify(room));
-        // for (; ;) {
-        //   const response = await redis.xread('BLOCK', 0, 'STREAMS', `messages:${payload.roomId}`);
-        // }
+        await listenToRoom(room._id);
         rooms.push(room);
       }
 
@@ -106,7 +147,10 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
       return room;
     },
     async sendMessage (message) {
-      // TODO: push this to redis :)
+      const internalId = await redis.xadd(`messages:${message.roomId}`, '*', 'message', JSON.stringify(message));
+
+      console.log('redis returned this id: ', internalId);
+
       return message;
     },
   };
