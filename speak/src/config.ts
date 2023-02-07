@@ -4,12 +4,15 @@ import { envStrict, envStrictAs, envStrictAsInt } from './lib/runtime';
 export enum Env {
   Production = 'production',
   Development = 'development',
+  Test = 'test',
 }
 
 export const env = envStrictAs('NODE_ENV', env => {
   switch (env) {
     case 'production':
       return Env.Production;
+    case 'test':
+      return Env.Test;
     case 'development':
       return Env.Development;
     default:
@@ -31,7 +34,6 @@ export const redis = {
 //   retryWrites: true,
 //   w: 'majority',
 // };
-// 
 // export const mongodb = {
 //   uri: envStrict('MONGODB_URI'),
 //   options: mongoDbOptions,

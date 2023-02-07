@@ -1,16 +1,10 @@
 import { Router } from 'express';
-import { Room } from '../services/rooms';
-import { uuid } from '../lib/misc';
-import { redis } from '../redis';
+import { createRoom } from 'src/services/rooms';
 
 export const routes = Router()
   .post('/', (req, res, next) => {
-    const room: Room = {
-      _id: uuid(),
-    };
-
-    redis.hset(`rooms:${room._id}`, 'room', JSON.stringify(room))
-      .then(() => {
+    createRoom()
+      .then(room => {
         res.json({
           data: { room },
         });

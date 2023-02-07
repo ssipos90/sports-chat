@@ -7,19 +7,17 @@ import { routes } from './http';
 import { http } from './config';
 import { wsEventHandlers } from './wsEventHandlers';
 
-export const start = async function (): Promise<[Server, Express, WebSocketServer]> {
-  process.on('uncaughtException', function (e) {
-    console.error(e);
-    process.exit(2);
-  });
+export type App = [Server, Express, WebSocketServer];
+
+export const start = async function (): Promise<App> {
   const app = startExpress(routes);
   const server = createServer(app);
 
   const wss = await createWsServer(server, wsEventHandlers);
 
-  server.listen(http.port, http.interface, () => {
-    console.log(`Started listening on ${http.interface}:${http.port}`);
-  });
+  await new Promise<void>(resolve => server.listen(http.port, http.interface, () => {
+    resolve();
+  }));
 
   return [server, app, wss];
 };

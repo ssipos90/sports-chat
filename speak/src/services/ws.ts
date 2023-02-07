@@ -6,29 +6,22 @@ import { User } from './users';
 import { v4 as uuid } from 'uuid';
 import { z, ZodError } from 'zod';
 import { isValid, parseISO } from 'date-fns';
-import { redis } from '../redis';
+import { redis } from 'src/redis';
+import { idValidator } from 'src/lib/misc';
+import { loadRoom } from './rooms';
+import { redisXListen } from 'src/lib/redis';
 
-async function loadRoom (roomId: ID): Promise<Room | null> {
-  const room = await redis.hget(`room:${roomId}`, 'room');
-  if (room === null) {
-    return null;
-  }
+// interface Match {
+//   _id: ID
+//   title: string
+//   startDate: Date
+//   users: User[]
+// }
 
-  // TODO: we will trust our past self that 'room' is valid
-  return JSON.parse(room);
-}
-
-interface Match {
+export interface ClientRoom {
   _id: ID
-  title: string
-  startDate: Date
-  users: User[]
-}
-
-export interface Room {
-  _id: ID
-  match: Match
-  clients: Client[]
+  // match: Match
+  clients: Set<Client>
 }
 
 interface Message {
@@ -42,12 +35,12 @@ interface Message {
 interface Client {
   _id: ID
   user: User
-  rooms: ID[]
+  rooms: Set<ID>
   ws: WebSocket
 }
 
 interface Context {
-  joinRoom: (client: Client, roomId: ID) => Promise<Room>
+  joinRoom: (client: Client, roomId: ID) => Promise<ClientRoom>
   sendMessage: (message: Message) => Promise<Message>
 }
 
@@ -59,9 +52,16 @@ export interface WsMessage<P = undefined> {
   payload?: P
 }
 
+export interface WsOutgoingMessage<P = undefined> {
+  _id: string
+  event: string
+  ts: string
+  payload?: P
+}
+
 export const baseMessageValidator = z.object({
-  _id: z.string().length(32),
-  userId: z.string().length(32),
+  _id: idValidator,
+  userId: idValidator,
   ts: z.string()
     .transform(s => parseISO(s))
     .refine(isValid),
@@ -73,95 +73,150 @@ export type WsEventHandlers = Record<string, WsEventHandler>;
 
 export async function createWsServer (server: Server, handlers: WsEventHandlers): Promise<WebSocketServer> {
   const wss = new WebSocketServer({
-    server,
+    noServer: true,
+  });
+
+  const clients: Client[] = [];
+  const clientRooms: Map<ID, ClientRoom> = new Map();
+
+  function listenToRoom (room: ClientRoom): void {
+    console.log('listening to room: ', room._id);
+    redisXListen(redis, {
+      onError (error) {
+        console.error(error);
+
+        return true;
+      },
+      onMessage (stream, message) {
+        console.log(`got message in room ${room._id}`, message);
+        const relevantClients = clients
+          .filter(client => client.rooms.has(room._id));
+
+        // remove this listener since nobody wants it
+        if (relevantClients.length === 0) {
+          return false;
+        }
+
+        // directly send the message without decode/encode
+        relevantClients.forEach(client => {
+          client.ws.send(message);
+        });
+
+        return true;
+      },
+      onStop (reason, error) {
+        switch (reason) {
+          case 'error':
+            console.log('stopped listenting to stream because of error: ', error);
+            break;
+          case 'stop':
+            console.log('stopped listening to stream.');
+            break;
+        }
+        clients
+          .forEach(client => {
+            client.rooms.delete(room._id);
+            // TODO: send client room disconnect message
+          });
+      },
+      stream: `messages:${room._id}`,
+    });
+  }
+
+  server.on('upgrade', (request, socket, head) => {
+    userFromAuthorizationBearer(request)
+      .then(user => {
+        if (user == null) {
+          throw new Error('No user.');
+        }
+        wss.handleUpgrade(request, socket, head, ws => {
+          const client = createClient(user, ws);
+          clients.push(client);
+          wss.emit('connection', ws, request, client);
+        });
+      })
+      .catch(e => {
+        console.log('Failed to authenticate websocket: ', e);
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+      });
   });
 
   function createClient (user: User, ws: WebSocket): Client {
     const client: Client = {
       _id: uuid(),
       user,
-      rooms: [],
+      rooms: new Set(),
       ws,
     };
 
     return client;
   }
 
-  async function listenToRoom (roomId: ID): Promise<void> {
-    let errorCount = 0;
-    let lastId = '$';
-    function listener (): void {
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      redis.xread('BLOCK', 0, 'STREAMS', `messages:${roomId}`, lastId, (err, result) => {
-        if (err || result === undefined) {
-          ++errorCount;
-          console.error(`redis xread failed ${errorCount} times. Last error is:`, err);
-          if (errorCount > 3) {
-            // TODO: disconnect all clients from this room.
-            return;
-          }
-          setTimeout(listener, errorCount * 1000);
-        } else if (result === null) {
-          // TODO: stream doesn't exist (check docs though)
-          console.error('message stream does not exist in redis.');
-        } else {
-          errorCount = 0;
-          const roomClients = clients
-            .filter(client => client.rooms.includes(roomId));
-          if (roomClients.length > 0) {
-            result.forEach(([_, messages]) => {
-              messages.forEach(([id, [_, message]]) => {
-                lastId = id;
-                roomClients.forEach(client => {
-                  client.ws.send(JSON.stringify(message));
-                });
-              });
-            });
-            setImmediate(listener);
-          }
-        }
-      });
-    }
+  function buildClientRoom (roomId: ID): ClientRoom {
+    console.log('building client room.');
 
-    listener();
+    const clientRoom: ClientRoom = {
+      _id: roomId,
+      clients: new Set(),
+    };
+    clientRooms.set(roomId, clientRoom);
+
+    loadRoom(roomId)
+      .then(room => {
+        if (room === null) {
+          return Promise.reject(new Error('This isn\'t the room you\'re looking for.'));
+        }
+
+        // TODO: update clientRoom with db data
+
+        listenToRoom(clientRoom);
+      })
+      .catch(e => {
+        console.error('Failed to load room', e);
+        disconnectClientRoom(clientRoom, e.message);
+      });
+
+    return clientRoom;
+  }
+
+  function disconnectClientRoom (clientRoom: ClientRoom, error?: string): void {
+    clientRooms.delete(clientRoom._id);
+    const message: WsOutgoingMessage<{ roomId: ID, error?: string }> = {
+      _id: '',
+      event: 'roomDisconnected',
+      ts: new Date().toISOString(),
+      payload: {
+        roomId: clientRoom._id,
+        error,
+      },
+    };
+    clientRoom.clients.forEach(client => {
+      client.rooms.delete(clientRoom._id);
+      client.ws.send(JSON.stringify({ ...message, _id: uuid() }));
+    });
   }
 
   const context: Context = {
-    async joinRoom (client: Client, roomId: ID) {
-      // this function mutates and it's kind of sucky
+    async joinRoom (client, roomId) {
+      const clientRoom = clientRooms.get(roomId) ?? buildClientRoom(roomId);
 
-      const loadedRoom = rooms.find(room => room._id === roomId);
-      const room = loadedRoom ?? await loadRoom(roomId);
+      client.rooms.add(roomId);
+      clientRoom.clients.add(client);
 
-      if (room === null) {
-        throw new Error('This isn\'t the room you\'re looking for.');
-      }
-
-      if (loadedRoom === undefined) {
-        await listenToRoom(room._id);
-        rooms.push(room);
-      }
-
-      room.clients.push(client);
-
-      return room;
+      return clientRoom;
     },
     async sendMessage (message) {
-      const internalId = await redis.xadd(`messages:${message.roomId}`, '*', 'message', JSON.stringify(message));
-
-      console.log('redis returned this id: ', internalId);
+      await redis.xadd(`messages:${message.roomId}`, '*', 'message', JSON.stringify(message));
 
       return message;
     },
   };
 
-  const clients: Client[] = [];
-  const rooms: Room[] = [];
-
   const messageValidator = z.object({
-    _id: z.string().length(32),
+    _id: idValidator,
     event: z.string().refine(event => event in handlers, 'Unknown event type'),
-    userId: z.string().length(32),
+    userId: idValidator,
     ts: z.string()
       .transform(s => parseISO(s))
       .refine(isValid),
@@ -175,7 +230,7 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
     ws.on('message', function onMessage (data) {
       debug('Received message(s)');
       if (data instanceof ArrayBuffer) {
-      // TODO: handle unsupported case
+        // TODO: handle unsupported case
         return;
       }
       (Array.isArray(data) ? data : [data])
@@ -194,8 +249,10 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
           } catch (e) {
             debug('Failed to validate wsMessage: %j', e);
             if (e instanceof ZodError) {
-              // TODO: handle validation errors
+              // TODO: maybe count to 3 and disconnect
               ws.send(JSON.stringify({
+                error: 'Websocket message validation error',
+                errors: e.flatten().fieldErrors,
               }));
             }
             return;
@@ -219,25 +276,6 @@ export async function createWsServer (server: Server, handlers: WsEventHandlers)
         clients.splice(idx, 1);
       }
     });
-  });
-
-  server.on('upgrade', (request, socket, head) => {
-    userFromAuthorizationBearer(request)
-      .then(user => {
-        if (user == null) {
-          throw new Error('No user.');
-        }
-        wss.handleUpgrade(request, socket, head, ws => {
-          const client = createClient(user, ws);
-          clients.push(client);
-          wss.emit('connection', ws, request, client);
-        });
-      })
-      .catch(e => {
-        console.log('Failed to authenticate websocket: ', e);
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        socket.destroy();
-      });
   });
 
   return wss;

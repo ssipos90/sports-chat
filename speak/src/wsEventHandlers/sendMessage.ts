@@ -1,9 +1,10 @@
+import { idValidator } from 'src/lib/misc';
 import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
 import { WsEventHandler } from '../services/ws';
 
 export const validator = z.object({
-  roomId: z.string(),
+  roomId: idValidator,
   body: z.string().min(1).max(200),
 });
 
