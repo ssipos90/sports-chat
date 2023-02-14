@@ -1,5 +1,6 @@
 Building a chat app using web sockets for learning NodeJS WebSockets and Redis.
 
+- [x] ~~Find a system's design tool of sorts~~ Use markdown
 - [x] Prototype the web socket server
 - [x] Prototype Redis stream
 - [x] Refactor to more testable code

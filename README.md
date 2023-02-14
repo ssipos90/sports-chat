@@ -9,9 +9,9 @@ push live notifications in the chat.
 > The aim of this project is to learn websockets, microservices and event
 > stores, as well as distributed systems (perhaps).
 
-## TODOs
+## TODO
 
-- [x] ~~Find a system's design tool of sorts~~ Use markdown
+See [TODO.md](TODO.md).
 
 ## General architecture
 
