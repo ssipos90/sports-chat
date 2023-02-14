@@ -20,7 +20,7 @@ services:
     working_dir: /home/node/app
     volumes:
       - ./speak:/home/node/app:ro
-  redis6:
+  redis:
     image: redis:6-alpine
     command:
       - 'redis-server'
@@ -31,6 +31,8 @@ services:
       - 'yes'
       - '--loglevel'
       - 'warning'
+    ports:
+      - 6379:6379
     volumes:
       - redis_data:/data
 

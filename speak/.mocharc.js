@@ -5,8 +5,8 @@ module.exports = {
     'dotenv/config',
   ],
   extension: ['ts'],
-  // spec: [
-  //   './src/**/*.spec.ts',
-  //   './test/**/*.spec.ts',
-  // ]
+  spec: [
+    './src/**/*.spec.ts',
+    './test/**/*.spec.ts',
+  ]
 };

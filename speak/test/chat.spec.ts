@@ -3,27 +3,19 @@ import { registerUser } from 'src/services/users';
 import { createRoom } from 'src/services/rooms';
 import WebSocket from 'ws';
 import * as config from 'src/config';
-import { uuid } from 'src/lib/misc';
+import { delay, uuid } from 'src/lib/misc';
 import { promisify } from 'util';
 import { createServer } from 'http';
 import { wsEventHandlers } from 'src/wsEventHandlers';
-import { createWsServer } from 'src/services/ws';
+import { createWsServer, WsOutgoingMessage } from 'src/services/ws';
+import { createDefer, sendMsg } from 'src/lib/test';
+import { expect } from 'chai';
+import { isValid, parseISO } from 'date-fns';
 
-const deferredItems: Array<() => Promise<void> | void> = [];
-
-afterEach(async () => {
-  console.log('running deferred items.');
-  for (const d of deferredItems) {
-    await d();
-  }
-  deferredItems.length = 0;
-});
-
-export function defer (callback: () => Promise<void> | void): void {
-  deferredItems.push(callback);
-}
+const smolDelay = delay(50);
 
 describe('chatting', function () {
+  const defer = createDefer();
   before('start http server', async function () {
     this.httpServer = createServer();
     this.wss = await createWsServer(this.httpServer, wsEventHandlers);
@@ -50,7 +42,9 @@ describe('chatting', function () {
       password: '1q2w3e',
     });
 
-    const room = await createRoom();
+    const room = await createRoom({
+      matchId: uuid(),
+    });
 
     const client1 = new WebSocket(`ws://localhost:${config.http.port}/`, {
       headers: {
@@ -71,43 +65,80 @@ describe('chatting', function () {
     await promisify(client1.on).call(client1, 'open');
     await promisify(client2.on).call(client2, 'open');
 
-    await promisify(client1.send).call(client1, JSON.stringify({
-      _id: uuid(),
-      userId: user1._id,
+    await sendMsg(client1, {
       event: 'joinRoom',
-      ts: new Date().toISOString(),
       payload: {
         roomId: room._id,
       },
-    }));
-    await promisify(client2.send).call(client2, JSON.stringify({
-      _id: uuid(),
-      userId: user2._id,
-      event: 'joinRoom',
-      ts: new Date().toISOString(),
-      payload: {
-        roomId: room._id,
-      },
-    }));
-
-    await new Promise<void>(resolve => {
-      client2.on('message', msg => {
-        console.log('message received', (msg as Buffer).toString('utf8'));
-        resolve();
-      });
-      client1.send(JSON.stringify({
-        _id: uuid(),
-        userId: user2._id,
-        event: 'sendMessage',
-        ts: new Date().toISOString(),
-        payload: {
-          _id: uuid(),
-          roomId: room._id,
-          userId: user2._id,
-          body: 'smf',
-          ts: new Date().toISOString(),
-        },
-      }));
     });
+
+    await sendMsg(client2, {
+      event: 'joinRoom',
+      payload: {
+        roomId: room._id,
+      },
+    });
+
+    function whateverMan (msg: WebSocket.RawData): Buffer[] {
+      if (msg instanceof ArrayBuffer) {
+        return [Buffer.from(msg)];
+      }
+      return Array.isArray(msg) ? msg : [msg];
+    }
+
+    const [recievedMessage1, recievedMessage2, sentMessage] =
+      await Promise.all([
+        new Promise<WsOutgoingMessage<unknown>>(resolve => {
+          client1.on('message', msg => {
+            const msg1 = whateverMan(msg)
+              .map(msg => JSON.parse(msg.toString()))
+              .find(msg => {
+                return msg.event === 'messageReceived';
+              });
+            if (msg1) {
+              resolve(msg1);
+            }
+          });
+        }),
+        new Promise<WsOutgoingMessage<unknown>>(resolve => {
+          client2.on('message', msg => {
+            const msg1 = whateverMan(msg)
+              .map(msg => JSON.parse(msg.toString()))
+              .find(msg => {
+                return msg.event === 'messageReceived';
+              });
+            if (msg1) {
+              resolve(msg1);
+            }
+          });
+        }),
+        smolDelay()
+          .then(async () =>
+            await sendMsg(client2, {
+              event: 'sendMessage',
+              payload: {
+                _id: uuid(),
+                roomId: room._id,
+                userId: user2._id,
+                body: 'message2',
+              },
+            })),
+      ]);
+
+    // TODO: create a tool for asserting as WsMessage
+    expect(recievedMessage1).to.have.property('_id').that.is.a('string');
+    expect(recievedMessage1).to.have.property('event').that.equals('messageReceived');
+    expect(recievedMessage1).to.have.property('ts').that.is.a('string');
+    expect(recievedMessage1).to.have.property('payload'); // TODO: this should be skippable
+    const ts = parseISO(recievedMessage1.ts);
+    expect(ts).to.be.instanceOf(Date);
+    expect(isValid(ts)).to.equal(true);
+
+    expect(recievedMessage1.payload).to.include.keys(['_id', 'ts']);
+    expect(recievedMessage1.payload).to.have.property('roomId', sentMessage.payload.roomId);
+    expect(recievedMessage1.payload).to.have.property('body', sentMessage.payload.body);
+    expect(recievedMessage1.payload).to.have.property('userId', user2._id);
+
+    expect(recievedMessage1.payload).to.deep.equal(recievedMessage2.payload);
   });
 });

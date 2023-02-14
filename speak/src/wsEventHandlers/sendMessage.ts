@@ -1,20 +1,19 @@
-import { idValidator } from 'src/lib/misc';
-import { v4 as uuid } from 'uuid';
+import { idValidator, uuid } from 'src/lib/misc';
 import { z } from 'zod';
 import { WsEventHandler } from '../services/ws';
 
 export const validator = z.object({
+  _id: idValidator.optional(),
   roomId: idValidator,
   body: z.string().min(1).max(200),
 });
 
-export const sendMessage: WsEventHandler = async (_client, wsMessage, context) => {
+export const sendMessage: WsEventHandler = async (client, wsMessage, context) => {
   const payload = await validator.parseAsync(wsMessage.payload);
 
   await context.sendMessage({
     ...payload,
-    _id: uuid(),
-    ts: wsMessage.ts,
-    userId: wsMessage.userId,
+    _id: payload._id ?? uuid(),
+    userId: client.user._id,
   });
 };
